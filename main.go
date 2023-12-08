@@ -1,28 +1,27 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"os"
-	"sync"
 
-	"github.com/LUH-VSS/project-ds-j0hax/AIO"
+	"github.com/LUH-VSS/project-ds-j0hax/reader"
 )
 
 func main() {
-	words := make(chan string)
 
-	// For each file, start a ReaderWorker
-	for _, file := range os.Args[1:] {
-		go AIO.ReaderWorker(file, words)
+	readerCmd := flag.NewFlagSet("reader", flag.ExitOnError)
+	readerHost := readerCmd.String("host", "http://127.0.0.1:1831/words", "The host to send trend data to")
+
+	if len(os.Args) < 2 {
+		fmt.Println("expected 'reader' or 'writer' subcommands")
+		os.Exit(1)
 	}
 
-	// Start m WriterWorkers
-	var wg sync.WaitGroup
-	for i := 0; i < 1; i++ {
-		wg.Add(1)
-		go AIO.WriterWorker(&wg, "", words)
+	switch os.Args[1] {
+	case "reader":
+		readerCmd.Parse(os.Args[2:])
+		r := reader.NewReader()
+	case "writer":
 	}
-
-	// Wait for Workers to finish...
-	wg.Wait()
-
 }
