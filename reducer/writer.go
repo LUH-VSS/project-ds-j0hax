@@ -2,56 +2,87 @@ package reducer
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
-	"sync"
-
-	"github.com/LUH-VSS/project-ds-j0hax/data"
+	"os"
+	"os/signal"
+	"slices"
+	"syscall"
 )
 
 type Writer struct {
-	bindAddr string
-	pattern  string
+	bindAddr      string
+	pattern       string
+	outputFile    string
+	incomingWords chan string
+	wordCounts    map[string]int64
 }
 
-func WriterWorker(wg *sync.WaitGroup, file string, collector <-chan string) {
-	defer wg.Done()
-
-	// Internal hashmap for storing word counts
-	m := make(map[string]int)
-
-	// For each word recieved, check if it exists in the map and/or increment the value
-	for word := range collector {
-		val, ok := m[word]
-		if ok {
-			m[word] = val + 1
-		} else {
-			m[word] = 1
-		}
-
-		log.Printf("%s = %d\n", word, m[word])
+// For each word recieved, check if it exists in the map and/or increment the value
+func (w *Writer) countWords() {
+	for word := range w.incomingWords {
+		w.wordCounts[word] += 1
 	}
 }
 
-func test(rw http.ResponseWriter, req *http.Request) {
+func (w *Writer) saveFile() {
+	keys := make([]string, 0, len(w.wordCounts))
+	for k := range w.wordCounts {
+		keys = append(keys, k)
+	}
+
+	slices.Sort(keys)
+
+	file, err := os.CreateTemp("", "excercise")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	for _, k := range keys {
+		fmt.Fprintf(file, "%s %d\n", k, w.wordCounts[k])
+	}
+
+	log.Printf("Saved to %s\n", file.Name())
+}
+
+func (w *Writer) handleWords(rw http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
-	var t data.Word
-	err := decoder.Decode(&t)
+	var wrd string
+	err := decoder.Decode(&wrd)
 	if err != nil {
 		panic(err)
 	}
-	log.Printf("%#v\n", t)
+
+	w.incomingWords <- wrd
 }
 
 func (w *Writer) Run() {
-	log.Printf("Listening on %s%s\n", w.bindAddr, w.pattern)
-	http.HandleFunc(w.pattern, test)
+	// Listen for a SIGINT and save file in that case.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		w.saveFile()
+		os.Exit(0)
+	}()
+
+	go w.countWords()
+
+	log.Printf("Listening on %s under %s\n", w.bindAddr, w.pattern)
+	log.Println("Press ^C (SIGINT) to save output file when done.")
+	http.HandleFunc(w.pattern, w.handleWords)
 	log.Fatal(http.ListenAndServe(w.bindAddr, nil))
 }
 
-func NewWriter(addr, pattern string) *Writer {
+func NewWriter(addr, pattern, outputFile string) *Writer {
 	return &Writer{
-		bindAddr: addr,
-		pattern:  pattern,
+		bindAddr:      addr,
+		pattern:       pattern,
+		outputFile:    outputFile,
+		incomingWords: make(chan string),
+		wordCounts:    make(map[string]int64),
 	}
 }

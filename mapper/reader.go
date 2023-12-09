@@ -4,26 +4,28 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sync"
 	"time"
-
-	"io"
-
-	"github.com/LUH-VSS/project-ds-j0hax/data"
 )
+
+// Anything that is not a letter as defined by Unicode
+var notLetters = regexp.MustCompile(`[^\p{L}]+`)
 
 // Reader reads the specified files in parallel and uploads the JSON-encoded words to the endpoint
 type Reader struct {
 	files    []string
 	endpoint *url.URL
+	emitter  chan string
 }
 
 // ProcessFile reads the file at the path in string and sends the words contained in it to the emitter channel.
-func ProcessFile(file string, emitter chan<- data.Word) {
+func (r *Reader) ProcessFile(file string) {
 	log.Printf("Start reading %s\n", file)
 	f, err := os.Open(file)
 	if err != nil {
@@ -34,10 +36,9 @@ func ProcessFile(file string, emitter chan<- data.Word) {
 	scanner := bufio.NewScanner(f)
 	scanner.Split(bufio.ScanWords)
 	for scanner.Scan() {
-		emitter <- data.Word{
-			OriginFile: file,
-			Word:       scanner.Text(),
-		}
+		rawWord := scanner.Text()
+		word := notLetters.ReplaceAllString(rawWord, "")
+		r.emitter <- word
 	}
 	if err := scanner.Err(); err != nil {
 		log.Panic(err)
@@ -46,8 +47,8 @@ func ProcessFile(file string, emitter chan<- data.Word) {
 }
 
 // sendWords
-func (r *Reader) sendWords(emitter chan data.Word) {
-	for word := range emitter {
+func (r *Reader) sendWords() {
+	for word := range r.emitter {
 		payload, err := json.Marshal(word)
 		if err != nil {
 			log.Print(err)
@@ -78,18 +79,16 @@ func (r *Reader) sendWords(emitter chan data.Word) {
 func (r *Reader) Run() {
 	log.Printf("Start mapping %d files\n", len(r.files))
 	var wg sync.WaitGroup
-	buffsize := len(r.files)
-	words := make(chan data.Word, buffsize)
 
 	// Start the goroutine that listens on the channel and sends the words
-	go r.sendWords(words)
+	go r.sendWords()
 
 	// Read each file in parallel
 	for _, f := range r.files {
 		wg.Add(1)
 		go func(f string) {
 			defer wg.Done()
-			ProcessFile(f, words)
+			r.ProcessFile(f)
 		}(f)
 	}
 	wg.Wait()
@@ -102,8 +101,11 @@ func NewReader(destination string, files []string) *Reader {
 		log.Panic(err)
 	}
 
+	buffsize := len(files)
+
 	return &Reader{
 		files:    files,
 		endpoint: url,
+		emitter:  make(chan string, buffsize),
 	}
 }

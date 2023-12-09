@@ -30,7 +30,7 @@ func main() {
 		r.Run()
 	case "reduce":
 		writerCmd.Parse(os.Args[2:])
-		w := reducer.NewWriter(*writerAddr, *writerPattern)
+		w := reducer.NewWriter(*writerAddr, *writerPattern, readerCmd.Arg(0))
 		w.Run()
 	}
 }
