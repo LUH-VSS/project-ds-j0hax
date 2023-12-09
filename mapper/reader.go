@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"time"
 
 	"io"
 
@@ -21,8 +22,8 @@ type Reader struct {
 	endpoint *url.URL
 }
 
-// ReadFile reads the file at the path in string and sends the words contained in it to the emitter channel. wg.Done() is called when the function exits.
-func ReadFile(file string, emitter chan<- data.Word) {
+// ProcessFile reads the file at the path in string and sends the words contained in it to the emitter channel.
+func ProcessFile(file string, emitter chan<- data.Word) {
 	log.Printf("Start reading %s\n", file)
 	f, err := os.Open(file)
 	if err != nil {
@@ -45,7 +46,7 @@ func ReadFile(file string, emitter chan<- data.Word) {
 }
 
 // sendWords
-func (r *Reader) sendWords(emitter <-chan data.Word) {
+func (r *Reader) sendWords(emitter chan data.Word) {
 	for word := range emitter {
 		payload, err := json.Marshal(word)
 		if err != nil {
@@ -53,9 +54,19 @@ func (r *Reader) sendWords(emitter <-chan data.Word) {
 		}
 
 		var body io.Reader = bytes.NewBuffer(payload)
-		_, err = http.Post(r.endpoint.String(), "application/json", body)
-		if err != nil {
-			log.Print(err)
+
+		backoff := time.Second
+
+		for {
+			_, err := http.Post(r.endpoint.String(), "application/json", body)
+			if err != nil {
+				log.Print(err)
+				log.Printf("Retrying in %s\n", backoff)
+				time.Sleep(backoff)
+				backoff += time.Second
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -65,6 +76,7 @@ func (r *Reader) sendWords(emitter <-chan data.Word) {
 // It begins by reading files in parallel and
 // POSTing these to its configured destination.
 func (r *Reader) Run() {
+	log.Printf("Start mapping %d files\n", len(r.files))
 	var wg sync.WaitGroup
 	buffsize := len(r.files)
 	words := make(chan data.Word, buffsize)
@@ -77,7 +89,7 @@ func (r *Reader) Run() {
 		wg.Add(1)
 		go func(f string) {
 			defer wg.Done()
-			ReadFile(f, words)
+			ProcessFile(f, words)
 		}(f)
 	}
 	wg.Wait()
