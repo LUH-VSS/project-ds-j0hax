@@ -15,7 +15,7 @@ import (
 )
 
 // Anything that is not a letter as defined by Unicode
-var notLetters = regexp.MustCompile(`[^\p{L}]+`)
+var notLetters = regexp.MustCompile(`[^\p{L}]*`)
 
 // Reader reads the specified files in parallel and uploads the JSON-encoded words to the endpoint
 type Reader struct {
@@ -39,7 +39,9 @@ func (r *Reader) ProcessFile(file string) {
 	for scanner.Scan() {
 		rawWord := scanner.Text()
 		word := notLetters.ReplaceAllString(rawWord, "") // remove punctuation
-		wordList = append(wordList, word)
+		if len(word) > 0 {
+			wordList = append(wordList, word)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		log.Panic(err)
