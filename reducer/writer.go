@@ -27,6 +27,7 @@ func (w *Writer) countWords() {
 }
 
 func (w *Writer) saveFile() {
+	log.Printf("Sorting %d words\n", len(w.wordCounts))
 	keys := make([]string, 0, len(w.wordCounts))
 	for k := range w.wordCounts {
 		keys = append(keys, k)
