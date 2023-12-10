@@ -50,13 +50,15 @@ func (w *Writer) saveFile() {
 func (w *Writer) handleWords(rw http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 	decoder := json.NewDecoder(req.Body)
-	var wrd string
-	err := decoder.Decode(&wrd)
+	var wordsReceived []string
+	err := decoder.Decode(&wordsReceived)
 	if err != nil {
 		panic(err)
 	}
 
-	w.incomingWords <- wrd
+	for _, word := range wordsReceived {
+		w.incomingWords <- word
+	}
 }
 
 func (w *Writer) Run() {
