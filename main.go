@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/LUH-VSS/project-ds-j0hax/mapper"
 	"github.com/LUH-VSS/project-ds-j0hax/reducer"
@@ -18,7 +19,7 @@ func subCmdError() {
 func main() {
 
 	readerCmd := flag.NewFlagSet("map", flag.ExitOnError)
-	readerHost := readerCmd.String("host", "http://127.0.0.1:1831/words", "The host to send trend data to")
+	readerHost := readerCmd.String("host", "http://127.0.0.1:1831/words", "The host(s) to send trend data to. These can be comma-seperated to send to multiple hosts.")
 	readerCmd.Usage = func() {
 		outfile := flag.CommandLine.Output()
 		fmt.Fprintf(outfile, "Usage: %s [OPTION] [FILE]...\n", os.Args[0])
@@ -37,7 +38,8 @@ func main() {
 	switch os.Args[1] {
 	case "map":
 		readerCmd.Parse(os.Args[2:])
-		r := mapper.NewReader(*readerHost, readerCmd.Args())
+		hosts := strings.Split(*readerHost, ",")
+		r := mapper.NewReader(hosts, readerCmd.Args())
 		r.Run()
 	case "reduce":
 		writerCmd.Parse(os.Args[2:])
