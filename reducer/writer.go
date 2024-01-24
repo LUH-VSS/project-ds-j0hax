@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sync"
 	"syscall"
 )
 
@@ -20,10 +21,15 @@ type Writer struct {
 }
 
 // For each word recieved, check if it exists in the map and/or increment the value
-func (w *Writer) countWords() {
+func (w *Writer) countWords(wg *sync.WaitGroup) {
+	wg.Add(1)
+	defer wg.Done()
+
 	for word := range w.incomingWords {
 		w.wordCounts[word] += 1
 	}
+
+	w.saveFile()
 }
 
 func (w *Writer) saveFile() {
@@ -35,7 +41,7 @@ func (w *Writer) saveFile() {
 
 	slices.Sort(keys)
 
-	file, err := os.CreateTemp("", "excercise")
+	file, err := os.CreateTemp("ds", "excercise")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -63,16 +69,19 @@ func (w *Writer) handleWords(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (w *Writer) Run() {
+	var wg sync.WaitGroup
+
 	// Listen for a SIGINT and save file in that case.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigs
-		w.saveFile()
+		close(w.incomingWords)
+		wg.Wait()
 		os.Exit(0)
 	}()
 
-	go w.countWords()
+	go w.countWords(&wg)
 
 	log.Printf("Listening on %s under %s\n", w.bindAddr, w.pattern)
 	log.Println("Press ^C (SIGINT) to save output file when done.")
