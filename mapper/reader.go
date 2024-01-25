@@ -2,11 +2,13 @@ package mapper
 
 import (
 	"bufio"
+	"encoding/gob"
 	"log"
 	"os"
 	"regexp"
 	"sync"
 
+	"github.com/LUH-VSS/project-ds-j0hax/lib"
 	"github.com/LUH-VSS/project-ds-j0hax/mapper/endpoint"
 )
 
@@ -17,7 +19,6 @@ var notLetters = regexp.MustCompile(`[^\p{L}]*`)
 type Reader struct {
 	files     []string
 	endpoints []endpoint.Endpoint
-	epwg      *sync.WaitGroup
 }
 
 // ProcessFile reads the file at the path in string and uploads the list to the endpoint
@@ -57,7 +58,6 @@ func Hash(word string) uint64 {
 func (r *Reader) Map(word string) {
 	// Pick an endpoint for this word
 	index := Hash(word) % uint64(len(r.endpoints))
-
 	r.endpoints[index].AddWord(word)
 }
 
@@ -66,8 +66,11 @@ func (r *Reader) Map(word string) {
 // It begins by reading files in parallel and
 // POSTing these to its configured destination.
 func (r *Reader) Run() {
-	log.Printf("Mapping %d files\n", len(r.files))
+	for _, e := range r.endpoints {
+		go e.Run()
+	}
 
+	log.Printf("Mapping %d files\n", len(r.files))
 	var fileGroup sync.WaitGroup
 	// Read each file in parallel
 	for _, f := range r.files {
@@ -81,28 +84,28 @@ func (r *Reader) Run() {
 	fileGroup.Wait()
 	log.Printf("Finished reading all files.")
 
-	for _, ep := range r.endpoints {
-		ep.Finish()
+	// Flush remaining batched words
+	for _, e := range r.endpoints {
+		e.Finish()
 	}
-	r.epwg.Wait()
-	log.Printf("Finished POSTing to all mappers.")
+	log.Println("Finished sending to all endpoints.")
 }
 
 // NewReader creates an instance of ReaderWorker
 func NewReader(destinations []string, files []string) *Reader {
-
-	var wg sync.WaitGroup
-
+	gob.Register(lib.Message{})
 	endpoints := make([]endpoint.Endpoint, 0, len(destinations))
 	for _, url := range destinations {
-		ep := endpoint.New(url, 4096, &wg)
-		go ep.CollectWords(&wg)
+		ep, err := endpoint.New(url, 4096)
+		if err != nil {
+			log.Printf("Skipping Reducer: %e\n", err)
+		}
+
 		endpoints = append(endpoints, *ep)
 	}
 
 	return &Reader{
 		files:     files,
 		endpoints: endpoints,
-		epwg:      &wg,
 	}
 }
