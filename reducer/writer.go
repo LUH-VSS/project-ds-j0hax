@@ -41,7 +41,7 @@ func (w *Writer) saveFile() {
 
 	slices.Sort(keys)
 
-	file, err := os.CreateTemp("ds", "excercise")
+	file, err := os.CreateTemp("", "excercise")
 	if err != nil {
 		log.Fatal(err)
 	}
