@@ -2,3 +2,8 @@
 
 ## Participants
 - Johannes Arnold, ErgebnisPIN `1022`
+
+## Installation and Usage
+0. Compile the program with `go build -o <name>`
+1. Compy the executable to the desired machines
+2. Run `./<executable> map|reduce [options] [files]` to process the files. Help can be found by passing the `--help` flag.
