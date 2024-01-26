@@ -19,7 +19,7 @@ func subCmdError() {
 func main() {
 
 	readerCmd := flag.NewFlagSet("map", flag.ExitOnError)
-	readerHost := readerCmd.String("host", "http://127.0.0.1:1831/words", "The host(s) to send trend data to. These can be comma-seperated to send to multiple hosts.")
+	readerHost := readerCmd.String("host", "127.0.0.1:1831", "The host(s) to send trend data to. These can be comma-seperated to send to multiple hosts.")
 	readerCmd.Usage = func() {
 		outfile := flag.CommandLine.Output()
 		fmt.Fprintf(outfile, "Usage: %s [OPTION] [FILE]...\n", os.Args[0])
@@ -29,7 +29,6 @@ func main() {
 
 	writerCmd := flag.NewFlagSet("reduce", flag.ExitOnError)
 	writerAddr := writerCmd.String("addr", ":1831", "The address to bind to")
-	writerPattern := writerCmd.String("pattern", "/words", "The pattern to listen to")
 
 	if len(os.Args) <= 1 {
 		subCmdError()
@@ -43,7 +42,7 @@ func main() {
 		r.Run()
 	case "reduce":
 		writerCmd.Parse(os.Args[2:])
-		w := reducer.NewWriter(*writerAddr, *writerPattern, readerCmd.Arg(0))
+		w := reducer.NewWriter(*writerAddr, readerCmd.Arg(0))
 		w.Run()
 	default:
 		subCmdError()

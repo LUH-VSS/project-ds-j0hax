@@ -1,37 +1,37 @@
 package reducer
 
 import (
-	"encoding/json"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"slices"
 	"sync"
 	"syscall"
+
+	"github.com/LUH-VSS/project-ds-j0hax/lib"
 )
 
 type Writer struct {
-	bindAddr      string
-	pattern       string
-	outputFile    string
-	incomingWords chan string
-	wordCounts    map[string]int64
+	bindAddr        string
+	outputFile      string
+	incomingWords   chan string
+	wordCounts      map[string]int64
+	connectionGroup *sync.WaitGroup
 }
 
 // For each word recieved, check if it exists in the map and/or increment the value
-func (w *Writer) countWords(wg *sync.WaitGroup) {
-	wg.Add(1)
-	defer wg.Done()
-
+func (w *Writer) countWords() {
 	for word := range w.incomingWords {
 		w.wordCounts[word] += 1
 	}
-
-	w.saveFile()
 }
 
+// saveFile writes a tempfile containing the sorted words
+// and their respective counts.
 func (w *Writer) saveFile() {
 	log.Printf("Sorting %d words\n", len(w.wordCounts))
 	keys := make([]string, 0, len(w.wordCounts))
@@ -54,47 +54,76 @@ func (w *Writer) saveFile() {
 	log.Printf("Saved to %s\n", file.Name())
 }
 
-func (w *Writer) handleWords(rw http.ResponseWriter, req *http.Request) {
-	defer req.Body.Close()
-	decoder := json.NewDecoder(req.Body)
-	var wordsReceived []string
-	err := decoder.Decode(&wordsReceived)
-	if err != nil {
-		panic(err)
-	}
+// handleConnection handles a TCP connection.
+//
+// Received data is decoded and words are counted until EOF.
+func (w *Writer) handleConnection(conn net.Conn) {
+	defer conn.Close()
+	defer w.connectionGroup.Done()
 
-	for _, word := range wordsReceived {
-		w.incomingWords <- word
+	var data lib.Message
+	dec := gob.NewDecoder(conn)
+
+	for {
+		err := dec.Decode(&data)
+		if err != nil {
+			if err == io.EOF {
+				log.Printf("EOF from %s\n", conn.RemoteAddr())
+				return
+			}
+			log.Panic(err)
+		}
+		for _, word := range data.Words {
+			w.incomingWords <- word
+		}
 	}
 }
 
+// Run starts the reducer.
+//
+// It will accept incoming TCP connections, decode data and count words.
 func (w *Writer) Run() {
-	var wg sync.WaitGroup
-
 	// Listen for a SIGINT and save file in that case.
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigs
-		close(w.incomingWords)
-		wg.Wait()
+		log.Println("Waiting for queues to finish...")
+		w.connectionGroup.Wait()
+		w.saveFile()
 		os.Exit(0)
 	}()
 
-	go w.countWords(&wg)
+	go w.countWords()
 
-	log.Printf("Listening on %s under %s\n", w.bindAddr, w.pattern)
+	ln, err := net.Listen("tcp", w.bindAddr)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Printf("Listening on %s\n", ln.Addr())
 	log.Println("Press ^C (SIGINT) to save output file when done.")
-	http.HandleFunc(w.pattern, w.handleWords)
-	log.Fatal(http.ListenAndServe(w.bindAddr, nil))
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		w.connectionGroup.Add(1)
+		go w.handleConnection(conn)
+	}
 }
 
-func NewWriter(addr, pattern, outputFile string) *Writer {
+// NewWriter creates a reducer instance.
+func NewWriter(addr, outputFile string) *Writer {
+	gob.Register(lib.Message{})
 	return &Writer{
-		bindAddr:      addr,
-		pattern:       pattern,
-		outputFile:    outputFile,
-		incomingWords: make(chan string),
-		wordCounts:    make(map[string]int64),
+		bindAddr:        addr,
+		outputFile:      outputFile,
+		incomingWords:   make(chan string),
+		wordCounts:      make(map[string]int64),
+		connectionGroup: &sync.WaitGroup{},
 	}
 }

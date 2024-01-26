@@ -1,94 +1,81 @@
 package endpoint
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
+	"encoding/gob"
 	"log"
-	"net/http"
-	"net/url"
-	"sync"
+	"net"
 	"time"
+
+	"github.com/LUH-VSS/project-ds-j0hax/lib"
 )
 
 type Endpoint struct {
-	endpoint  *url.URL
+	conn      net.Conn
+	enc       *gob.Encoder
 	wordQueue chan string
+	done      chan bool
 }
 
-// postWords sends a slice of words to the endpoint in JSON format.
+// sendBatch sends a collectiong of words to the configured endpoint.
 //
-// This function blocks until the bundle is successfully sent.
-// In case of error, linear backoff is used.
-func (e *Endpoint) postWords(words []string) {
-	payload, err := json.Marshal(words)
-
-	if err != nil {
-		log.Print(err)
-	}
-
-	var body io.Reader = bytes.NewBuffer(payload)
-
+// It will attempt to retransmit in case of an error.
+func (e *Endpoint) sendBatch(batch []string) {
 	backoff := time.Second
-
-	// Retry sending with a linear backoff until there is no error.
-	// Once the bundle has been sent, reset it to a fresh slice.
 	for {
-		_, err = http.Post(e.endpoint.String(), "application/json", body)
+		data := lib.New(batch)
+		err := e.enc.Encode(data)
 		if err != nil {
 			log.Print(err)
 			log.Printf("Retrying in %s\n", backoff)
 			time.Sleep(backoff)
 			backoff += time.Second
 		} else {
-			break
+			return
 		}
 	}
 }
 
-// CollectWords collects words sent over the readers internal channel,
-// and POSTs these in batches to the endpoint.
-//
-// A sync.WaitGroup is used to ensure the goroutine can completely finish.
-func (e *Endpoint) CollectWords(wg *sync.WaitGroup) {
-	wg.Add(1)
-	defer wg.Done()
-
-	batch := make([]string, 0, len(e.wordQueue))
+// Run begins adding queued words to a batch
+func (e *Endpoint) Run() {
+	batch := make([]string, 0, cap(e.wordQueue))
 	for word := range e.wordQueue {
 		batch = append(batch, word)
-
-		// Send all words in the batch once the slice is full
-		if len(batch) == cap(batch) {
-			e.postWords(batch)
-			batch = make([]string, 0, len(e.wordQueue))
+		if len(batch) >= cap(e.wordQueue) {
+			e.sendBatch(batch)
+			batch = make([]string, 0, cap(e.wordQueue))
 		}
 	}
 
-	// The channel has been closed, it is time to finish up.
-	e.postWords(batch)
+	// Channel is closed, send the last words
+	e.sendBatch(batch)
+	e.done <- true
 }
 
+// Finish closes the queue and
+// waits for the last words to be send.
+func (e *Endpoint) Finish() {
+	close(e.wordQueue)
+	<-e.done
+}
+
+// AddWord adds a word to the endpoint's queue.
+//
+// This function is thead-safe.
 func (e *Endpoint) AddWord(word string) {
 	e.wordQueue <- word
 }
 
-// Finish closes the internal queue channel.
-//
-// Assuming CollectWords has been called, this causes the remaining batch to be flushed.
-func (e *Endpoint) Finish() {
-	close(e.wordQueue)
-}
-
 // New creates a new Endpoint worker with the specified destination URL and queue size.
-func New(destination string, queueSize uint64, wg *sync.WaitGroup) *Endpoint {
-	url, err := url.Parse(destination)
+func New(address string, queueSize int) (*Endpoint, error) {
+	conn, err := net.Dial("tcp", address)
 	if err != nil {
-		log.Panic(err)
+		return nil, err
 	}
 
 	return &Endpoint{
-		endpoint:  url,
+		conn:      conn,
+		enc:       gob.NewEncoder(conn),
 		wordQueue: make(chan string, queueSize),
-	}
+		done:      make(chan bool),
+	}, nil
 }
